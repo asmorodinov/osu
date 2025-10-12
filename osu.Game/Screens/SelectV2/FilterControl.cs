@@ -400,6 +400,12 @@ namespace osu.Game.Screens.SelectV2
                         cacheTime = DateTimeOffset.Now;
                         isFetchingFavorites = false;
 
+                        realm.Write(r =>
+                        {
+                            r.Add(new BeatmapCollection(name: "Favourites", beatmapMD5Hashes: favoriteMD5Hashes.ToList()));
+                            r.Refresh();
+                        });
+
                         // Update criteria to apply the new filter if favorites is currently selected
                         if (collectionDropdown.Current.Value is FavoriteBeatmapsCollectionFilterMenuItem)
                         {
