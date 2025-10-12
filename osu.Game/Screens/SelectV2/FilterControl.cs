@@ -70,8 +70,12 @@ namespace osu.Game.Screens.SelectV2
 
         private IBindable<APIUser> localUser = null!;
 
-        private ImmutableHashSet<string>? cachedFavoriteMD5Hashes;
+        private HashSet<string> cachedFavoriteMD5Hashes = new HashSet<string> { };
         private bool isFetchingFavorites;
+        private int requestsCompleted = 0;
+        private int requestsFailed = 0;
+        private readonly int numRequests = 10;
+        private readonly object lockObject = new object();
         private int? lastFetchedUserId;
         private DateTimeOffset? cacheTime;
 
@@ -275,7 +279,7 @@ namespace osu.Game.Screens.SelectV2
                 // Clear cache when user changes
                 if (user.NewValue?.Id != lastFetchedUserId)
                 {
-                    cachedFavoriteMD5Hashes = null;
+                    cachedFavoriteMD5Hashes.Clear();
                     lastFetchedUserId = user.NewValue?.Id;
                     cacheTime = null;
                 }
@@ -351,7 +355,7 @@ namespace osu.Game.Screens.SelectV2
                 return null;
 
             // Return cached result if available (no expiry check - we refresh on selection)
-            return cachedFavoriteMD5Hashes;
+            return cachedFavoriteMD5Hashes.ToImmutableHashSet();
         }
 
         private void fetchFavoritesAsync()
@@ -360,79 +364,114 @@ namespace osu.Game.Screens.SelectV2
                 return;
 
             isFetchingFavorites = true;
+            requestsCompleted = 0;
+            requestsFailed = 0;
 
             int userId = api.LocalUser.Value!.Id;
-            var request = new GetUserBeatmapsRequest(userId, BeatmapSetType.Favourite, new PaginationParameters(0, 200));
 
-            request.Success += response =>
+            for (int i = 0; i < numRequests; ++i)
             {
-                Schedule(() =>
+                var request = new GetUserBeatmapsRequest(userId, BeatmapSetType.Favourite, new PaginationParameters(100 * i, 100));
+
+                request.Success += response =>
                 {
-                    try
+                    Schedule(() =>
                     {
-                        var favoriteMD5Hashes = new HashSet<string>();
-
-                        if (response.Count > 0)
+                        try
                         {
-                            var favoriteOnlineIds = response.Select(set => set.OnlineID).Where(id => id > 0).ToHashSet();
+                            var favoriteMD5Hashes = new HashSet<string>();
 
-                            if (favoriteOnlineIds.Count > 0)
+                            if (response.Count > 0)
                             {
-                                // Get all local beatmap sets
-                                var localBeatmapSets = beatmapManager.GetAllUsableBeatmapSets();
+                                var favoriteOnlineIds = response.Select(set => set.OnlineID).Where(id => id > 0).ToHashSet();
 
-                                // Find local beatmaps that match the favorite online IDs
-                                foreach (var localSet in localBeatmapSets)
+                                if (favoriteOnlineIds.Count > 0)
                                 {
-                                    if (localSet.OnlineID > 0 && favoriteOnlineIds.Contains(localSet.OnlineID))
+                                    // Get all local beatmap sets
+                                    var localBeatmapSets = beatmapManager.GetAllUsableBeatmapSets();
+
+                                    // Find local beatmaps that match the favorite online IDs
+                                    foreach (var localSet in localBeatmapSets)
                                     {
-                                        foreach (var beatmap in localSet.Beatmaps)
+                                        if (localSet.OnlineID > 0 && favoriteOnlineIds.Contains(localSet.OnlineID))
                                         {
-                                            if (!string.IsNullOrEmpty(beatmap.MD5Hash))
-                                                favoriteMD5Hashes.Add(beatmap.MD5Hash);
+                                            foreach (var beatmap in localSet.Beatmaps)
+                                            {
+                                                if (!string.IsNullOrEmpty(beatmap.MD5Hash))
+                                                    favoriteMD5Hashes.Add(beatmap.MD5Hash);
+                                            }
                                         }
                                     }
                                 }
                             }
+
+                            lock (lockObject)
+                            {
+                                cachedFavoriteMD5Hashes.UnionWith(favoriteMD5Hashes);
+                                cacheTime = DateTimeOffset.Now;
+
+                                requestsCompleted += 1;
+
+                                realm.Write(r =>
+                                {
+                                    r.RemoveRange(r.All<BeatmapCollection>().Where(s => s.Name == "Favourites"));
+                                    r.Add(new BeatmapCollection(name: "Favourites", beatmapMD5Hashes: cachedFavoriteMD5Hashes.ToList()));
+                                    r.Refresh();
+                                });
+
+                                if ((requestsCompleted + requestsFailed) == numRequests)
+                                {
+                                    isFetchingFavorites = false;
+                                }
+
+                                // Update criteria to apply the new filter if favorites is currently selected
+                                if (collectionDropdown.Current.Value is FavoriteBeatmapsCollectionFilterMenuItem)
+                                {
+                                    updateCriteria();
+                                }
+
+                                Console.WriteLine($"Completed requests: {requestsCompleted}, Failed requests: {requestsFailed}, Total requests: {numRequests}, Total beatmapsets: {cachedFavoriteMD5Hashes.Count}");
+                            }
                         }
-
-                        cachedFavoriteMD5Hashes = favoriteMD5Hashes.ToImmutableHashSet();
-                        cacheTime = DateTimeOffset.Now;
-                        isFetchingFavorites = false;
-
-                        realm.Write(r =>
+                        catch
                         {
-                            r.Add(new BeatmapCollection(name: "Favourites", beatmapMD5Hashes: favoriteMD5Hashes.ToList()));
-                            r.Refresh();
-                        });
+                            lock (lockObject)
+                            {
+                                requestsFailed += 1;
+                                cacheTime = DateTimeOffset.Now;
 
-                        // Update criteria to apply the new filter if favorites is currently selected
-                        if (collectionDropdown.Current.Value is FavoriteBeatmapsCollectionFilterMenuItem)
-                        {
-                            updateCriteria();
+                                if ((requestsCompleted + requestsFailed) == numRequests)
+                                {
+                                    isFetchingFavorites = false;
+                                }
+
+                                Console.WriteLine($"Completed requests: {requestsCompleted}, Failed requests: {requestsFailed}, Total requests: {numRequests}");
+                            }
                         }
-                    }
-                    catch
-                    {
-                        // On error, cache empty set and allow retry later
-                        cachedFavoriteMD5Hashes = ImmutableHashSet<string>.Empty;
-                        cacheTime = DateTimeOffset.Now;
-                        isFetchingFavorites = false;
-                    }
-                });
-            };
+                    });
+                };
 
-            request.Failure += _ =>
-            {
-                Schedule(() =>
+                request.Failure += _ =>
                 {
-                    // On failure, cache null (show all beatmaps) and allow retry later
-                    cachedFavoriteMD5Hashes = null;
-                    isFetchingFavorites = false;
-                });
-            };
+                    Schedule(() =>
+                    {
+                        lock (lockObject)
+                        {
+                            requestsFailed += 1;
+                            cacheTime = DateTimeOffset.Now;
 
-            api.Queue(request);
+                            if ((requestsCompleted + requestsFailed) == numRequests)
+                            {
+                                isFetchingFavorites = false;
+                            }
+
+                            Console.WriteLine($"Completed requests: {requestsCompleted}, Failed requests: {requestsFailed}, Total requests: {numRequests}");
+                        }
+                    });
+                };
+
+                api.Queue(request);
+            }
         }
 
         private void onFavouriteChanged(int beatmapSetId, bool favourited)
@@ -477,23 +516,21 @@ namespace osu.Game.Screens.SelectV2
                 return;
 
             // Update the cached set based on favorite status
-            var currentHashes = cachedFavoriteMD5Hashes?.ToHashSet() ?? new HashSet<string>();
 
             if (favourited)
             {
                 // Add hashes to favorites
                 foreach (string hash in setMD5Hashes)
-                    currentHashes.Add(hash);
+                    cachedFavoriteMD5Hashes.Add(hash);
             }
             else
             {
                 // Remove hashes from favorites
                 foreach (string hash in setMD5Hashes)
-                    currentHashes.Remove(hash);
+                    cachedFavoriteMD5Hashes.Remove(hash);
             }
 
             // Update the cache
-            cachedFavoriteMD5Hashes = currentHashes.ToImmutableHashSet();
             cacheTime = DateTimeOffset.Now;
         }
 
