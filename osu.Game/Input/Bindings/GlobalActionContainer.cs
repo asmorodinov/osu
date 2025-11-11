@@ -150,6 +150,8 @@ namespace osu.Game.Input.Bindings
             new KeyBinding(new[] { InputKey.Control, InputKey.Right }, GlobalAction.EditorSeekToNextHitObject),
             new KeyBinding(new[] { InputKey.Control, InputKey.Shift, InputKey.Left }, GlobalAction.EditorSeekToPreviousSamplePoint),
             new KeyBinding(new[] { InputKey.Control, InputKey.Shift, InputKey.Right }, GlobalAction.EditorSeekToNextSamplePoint),
+            new KeyBinding(new[] { InputKey.Control, InputKey.Up }, GlobalAction.EditorIncreasePlaybackSpeed),
+            new KeyBinding(new[] { InputKey.Control, InputKey.Down }, GlobalAction.EditorDecreasePlaybackSpeed),
             new KeyBinding(new[] { InputKey.Control, InputKey.B }, GlobalAction.EditorAddBookmark),
             new KeyBinding(new[] { InputKey.Control, InputKey.Shift, InputKey.B }, GlobalAction.EditorRemoveClosestBookmark),
             new KeyBinding(new[] { InputKey.Alt, InputKey.Left }, GlobalAction.EditorSeekToPreviousBookmark),
@@ -535,6 +537,11 @@ namespace osu.Game.Input.Bindings
 
         [LocalisableDescription(typeof(GlobalActionKeyBindingStrings), nameof(GlobalActionKeyBindingStrings.ToggleMusicMute))]
         ToggleMusicMute,
+        [LocalisableDescription(typeof(GlobalActionKeyBindingStrings), nameof(GlobalActionKeyBindingStrings.EditorIncreasePlaybackSpeed))]
+        EditorIncreasePlaybackSpeed,
+
+        [LocalisableDescription(typeof(GlobalActionKeyBindingStrings), nameof(GlobalActionKeyBindingStrings.EditorIncreasePlaybackSpeed))]
+        EditorDecreasePlaybackSpeed,
     }
 
     public enum GlobalActionCategory
