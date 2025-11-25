@@ -269,7 +269,7 @@ namespace osu.Game.Rulesets.Edit
 
         public virtual float GetBeatSnapDistance(IHasSliderVelocity? withVelocity = null)
         {
-            return (float)(100 * (withVelocity?.SliderVelocityMultiplier ?? 1) * EditorBeatmap.Difficulty.SliderMultiplier * 1
+            return (float)(100 * EditorBeatmap.Difficulty.SliderMultiplier * 1
                            / beatSnapProvider.BeatDivisor);
         }
 
